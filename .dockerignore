@@ -1,0 +1,26 @@
+# The images only need the fat jars produced by `./mvnw package`.
+# Keep target/*.jar; leave everything else out of the build context.
+.git
+.gitignore
+.gitattributes
+.idea
+.mvn
+mvnw
+mvnw.cmd
+**/src
+**/pom.xml
+pom.xml
+lombok.config
+*.md
+*.pdf
+docker-compose.yml
+.env
+.env.example
+**/target/classes
+**/target/test-classes
+**/target/generated-sources
+**/target/generated-test-sources
+**/target/maven-status
+**/target/maven-archiver
+**/target/surefire-reports
+**/target/*.jar.original

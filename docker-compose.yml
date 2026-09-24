@@ -1,0 +1,141 @@
+x-simulator: &simulator
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      MODULE: messager-simulator
+  image: messager-simulator:local
+  depends_on:
+    broker:
+      condition: service_healthy
+  environment: &simulator-env
+    BROKER_URL: http://broker:8080
+    SERVER_PORT: 9100
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://localhost:9100/actuator/health | grep -q '\"status\":\"UP\"'"]
+    interval: 15s
+    timeout: 5s
+    retries: 10
+    start_period: 30s
+  networks:
+    - messager-net
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: messager-rabbitmq
+    hostname: rabbitmq
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-5672}:5672"     # AMQP
+      - "${RABBITMQ_UI_PORT:-15672}:15672"   # management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    networks:
+      - messager-net
+
+  broker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: messager-broker
+    image: messager-broker:local
+    container_name: messager-broker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      MESSAGER_CONCURRENCY: ${MESSAGER_CONCURRENCY:-2}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - messager-net
+
+  sender:
+    <<: *simulator
+    container_name: messager-sender
+    ports:
+      - "${SENDER_PORT:-9200}:9100"
+    environment:
+      <<: *simulator-env
+      SENDER_ENABLED: "true"
+      SENDER_NAME: ${SENDER_NAME:-alice}
+      # only used when the timer is switched on
+      SENDER_DEFAULT_TARGET: ${SENDER_DEFAULT_TARGET:-all}
+      SENDER_AUTO: ${SENDER_AUTO:-false}
+      SENDER_INTERVAL: ${SENDER_INTERVAL:-5s}
+
+  receiver-1:
+    <<: *simulator
+    container_name: messager-receiver-1
+    ports:
+      - "${RECEIVER_1_PORT:-9101}:9100"
+    environment:
+      <<: *simulator-env
+      RECEIVER_ENABLED: "true"
+      RECEIVER_NAME: ${RECEIVER_1_NAME:-r1}
+      RECEIVER_GROUP: ${RECEIVER_1_GROUP:-workers}
+      RECEIVER_CALLBACK_URL: http://receiver-1:9100/receive
+
+  receiver-2:
+    <<: *simulator
+    container_name: messager-receiver-2
+    ports:
+      - "${RECEIVER_2_PORT:-9102}:9100"
+    environment:
+      <<: *simulator-env
+      RECEIVER_ENABLED: "true"
+      RECEIVER_NAME: ${RECEIVER_2_NAME:-r2}
+      RECEIVER_GROUP: ${RECEIVER_2_GROUP:-workers}
+      RECEIVER_CALLBACK_URL: http://receiver-2:9100/receive
+
+  receiver-3:
+    <<: *simulator
+    container_name: messager-receiver-3
+    ports:
+      - "${RECEIVER_3_PORT:-9103}:9100"
+    environment:
+      <<: *simulator-env
+      RECEIVER_ENABLED: "true"
+      RECEIVER_NAME: ${RECEIVER_3_NAME:-r3}
+      RECEIVER_GROUP: ${RECEIVER_3_GROUP:-reports}
+      RECEIVER_CALLBACK_URL: http://receiver-3:9100/receive
+
+  receiver-4:
+    <<: *simulator
+    profiles: ["extra"]
+    container_name: messager-receiver-4
+    ports:
+      - "${RECEIVER_4_PORT:-9104}:9100"
+    environment:
+      <<: *simulator-env
+      RECEIVER_ENABLED: "true"
+      RECEIVER_NAME: ${RECEIVER_4_NAME:-r4}
+      RECEIVER_GROUP: ${RECEIVER_4_GROUP:-archive}
+      RECEIVER_CALLBACK_URL: http://receiver-4:9100/receive
+
+volumes:
+  rabbitmq-data:
+
+networks:
+  messager-net:
+    driver: bridge

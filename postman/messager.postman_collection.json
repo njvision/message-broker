@@ -1,0 +1,1956 @@
+{
+  "info": {
+    "_postman_id": "8f3c1d42-6b7a-4c19-9e35-2a7d5f0b41c8",
+    "name": "messager — agent de mesaje (lab 2)",
+    "description": "Colecție pentru demonstrarea agentului de mesaje.\n\n**Un singur emițător**, care alege destinația la fiecare trimitere:\n\n| Scris ca | Înseamnă |\n|---|---|\n| `workers` | grupul `workers` — unul dintre receptorii lui îl ia |\n| `every:workers` | toți receptorii din `workers`, și nimeni altcineva |\n| `@r2` | receptorul `r2`, și niciun altul |\n| `all` | un membru din fiecare grup |\n| `every:all` | fiecare receptor care există |\n\n**Niciun grup nu e configurat în agent.** Un grup apare când primul lui receptor se înregistrează, deci `workers`, `reports` și `archive` există doar pentru că receptorii spun asta.\n\n**Înainte de rulare:**\n\n```bash\n./mvnw -DskipTests package\ndocker compose up -d --build\n```\n\nAșteaptă până când `docker compose ps` arată toate serviciile `healthy`, apoi rulează folderul `00`. Folderele se rulează **în ordine** — cererile de verificare folosesc id-urile salvate de cele de trimitere.\n\nCererile care verifică primirea au o așteptare în scriptul pre-request, ca livrarea să apuce să se producă. Dacă o verificare eșuează cu „e pe drum\", retrimite cererea.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "sender",
+      "value": "http://localhost:9200",
+      "type": "string"
+    },
+    {
+      "key": "receiver1",
+      "value": "http://localhost:9101",
+      "type": "string"
+    },
+    {
+      "key": "receiver2",
+      "value": "http://localhost:9102",
+      "type": "string"
+    },
+    {
+      "key": "receiver3",
+      "value": "http://localhost:9103",
+      "type": "string"
+    },
+    {
+      "key": "receiver4",
+      "value": "http://localhost:9104",
+      "type": "string"
+    },
+    {
+      "key": "lastMessageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "lastBroadcastId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "directMessageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "deadLetterId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "r1Before",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "r2Before",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "manualReceiverId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "everyBefore1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "everyBefore2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "everyBefore3",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "everyMessageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "allBefore1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "allBefore2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "allBefore3",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "allMessageId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 — Verificare stare",
+      "description": "Confirmă că agentul e viu și că topologia s-a format singură, din înregistrările receptorilor.",
+      "item": [
+        {
+          "name": "Starea agentului",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('agentul răspunde', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('starea generală este UP', () => pm.expect(body.status).to.eql('UP'));",
+                  "pm.test('conexiunea la RabbitMQ este UP', () =>",
+                  "    pm.expect(body.components.rabbit.status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/actuator/health",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "description": "Include starea conexiunii la RabbitMQ. Dacă `rabbit` nu e UP, restul colecției nu are sens."
+          }
+        },
+        {
+          "name": "Ce poate fi adresat acum",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "",
+                  "pm.test('grupurile s-au format din înregistrări', () => {",
+                  "    pm.expect(t.groups).to.include('workers');",
+                  "    pm.expect(t.groups).to.include('reports');",
+                  "});",
+                  "pm.test('fiecare receptor are o adresă proprie', () => {",
+                  "    const names = t.receivers.map(r => r.name);",
+                  "    pm.expect(names).to.include.members(['r1', 'r2', 'r3']);",
+                  "});",
+                  "",
+                  "console.log('grupuri: ' + t.groups.join(', '));",
+                  "console.log('receptori: ' + t.receivers.map(r => `${r.addressAs} (${r.group})`).join(', '));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages/targets",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages",
+                "targets"
+              ]
+            },
+            "description": "Tot ce poate fi scris în `target`: cheia de difuzare, grupurile vii și receptorii, fiecare cu adresa lui `@nume`.\n\n**Nimic din asta nu e în configurația agentului.** Grupurile `workers` și `reports` există pentru că receptorii `r1`, `r2` și `r3` s-au înregistrat spunând din ce grup fac parte. Schimbă `RECEIVER_GROUP` în compose și topologia se schimbă cu ea.\n\nEmițătorul cere aceeași listă cu `GET {{sender}}/targets`, ca să nu trebuiască să știe nimic dinainte."
+          }
+        },
+        {
+          "name": "Cine s-a înregistrat, cu ce nume",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const receivers = pm.response.json();",
+                  "pm.test('cel puțin 3 receptori înregistrați', () =>",
+                  "    pm.expect(receivers.length).to.be.at.least(3));",
+                  "pm.test('grupul workers are 2 receptori', () =>",
+                  "    pm.expect(receivers.filter(r => r.group === 'workers').length).to.eql(2));",
+                  "",
+                  "console.log(receivers.map(r =>",
+                  "    `${r.addressAs.padEnd(5)} ${r.group.padEnd(10)} livrate=${r.delivered} din care directe=${r.addressedDirectly} eșuate=${r.failed}`",
+                  ").join('\\n'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/receivers",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "receivers"
+              ]
+            },
+            "description": "Aplicațiile-receptor se anunță singure la pornire: își spun numele, grupul și adresa la care pot fi găsite.\n\n`addressedDirectly` numără câte mesaje au primit pentru că un emițător le-a numit, față de câte au primit ca membri ai grupului."
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 — Felurile de a adresa un mesaj",
+      "description": "Același emițător, trei destinații diferite. Obiectivul 1.c.",
+      "item": [
+        {
+          "name": "Către un GRUP — unul dintre receptorii lui îl ia",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesaj acceptat (202)', () => pm.response.to.have.status(202));",
+                  "const m = pm.response.json();",
+                  "pm.test('agentul confirmă destinația', () =>",
+                  "    pm.expect(m.addressedTo).to.eql(\"group 'workers'\"));",
+                  "pm.collectionVariables.set('lastMessageId', m.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"alice\",\n  \"content\": \"pentru oricine din workers\",\n  \"target\": \"workers\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Un nume simplu în `target` înseamnă grup. Mesajul intră în coada grupului, iar agentul alege care dintre receptorii lui îl primește, prin rotație.\n\nGrupul `reports` nu îl vede."
+          }
+        },
+        {
+          "name": "Către UN RECEPTOR anume — @r1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesaj acceptat (202)', () => pm.response.to.have.status(202));",
+                  "const m = pm.response.json();",
+                  "pm.test('agentul confirmă receptorul numit', () =>",
+                  "    pm.expect(m.addressedTo).to.eql(\"receiver 'r1'\"));",
+                  "pm.test('merge tot prin coada grupului lui', () =>",
+                  "    pm.expect(m.routingKey).to.eql('messager.workers'));",
+                  "pm.collectionVariables.set('directMessageId', m.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"alice\",\n  \"content\": \"doar pentru r1\",\n  \"target\": \"@r1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "`@nume` (sau `receiver:nume`) adresează un singur receptor.\n\nObservă `routingKey`: mesajul tot prin coada grupului `workers` trece — nu există o coadă privată pentru fiecare receptor. Ce îl face să ajungă la `r1` și numai la el e destinatarul purtat alături de mesaj, pe care pasul de livrare îl respectă în loc să aleagă singur.\n\nEmițătorul n-a trebuit să știe nici coada, nici URL-ul lui `r1` — doar numele."
+          }
+        },
+        {
+          "name": "Către TOȚI — fiecare grup primește o copie",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesaj acceptat (202)', () => pm.response.to.have.status(202));",
+                  "const m = pm.response.json();",
+                  "pm.test('agentul confirmă difuzarea', () =>",
+                  "    pm.expect(m.addressedTo).to.eql('every group'));",
+                  "pm.collectionVariables.set('lastBroadcastId', m.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"alice\",\n  \"content\": \"anunt pentru toti\",\n  \"target\": \"all\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Fiecare grup primește propria copie. În interiorul unui grup mesajul rămâne tratat o singură dată, de un singur receptor."
+          }
+        },
+        {
+          "name": "Mesaj invalid — respins la intrare",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('respins cu 400', () => pm.response.to.have.status(400));",
+                  "const problem = pm.response.json();",
+                  "pm.test('agentul spune de ce', () =>",
+                  "    pm.expect(problem.violations).to.be.an('array').with.lengthOf(2));",
+                  "console.log(problem.violations.join('\\n'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"\",\n  \"content\": \"\",\n  \"target\": \"workers\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Prima jumătate a politicii de validare: mesajul e respins **înainte** să ocupe vreo coadă, iar emițătorul află exact ce câmp e greșit. A doua jumătate rulează la ieșirea din coadă (folderul 06)."
+          }
+        },
+        {
+          "name": "Receptor inexistent — respins",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('respins cu 400', () => pm.response.to.have.status(400));",
+                  "pm.test('agentul spune cine există', () =>",
+                  "    pm.expect(pm.response.text()).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"bob\",\n  \"content\": \"salut\",\n  \"target\": \"@nimeni\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Stratul de rutare verifică destinația **înainte** de publicare: un nume care nu există nu ajunge niciodată pe exchange.\n\nLa fel pentru un grup inexistent, scris fără `@`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 — Verificarea primirii",
+      "description": "Verificarea se face la **aplicațiile-receptor**, procese separate de agent.",
+      "item": [
+        {
+          "name": "r1 — a primit mesajul adresat lui direct",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Postman nu are „sleep\": așteptăm activ, ca agentul să apuce să livreze.",
+                  "const until = Date.now() + 2500;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('este r1, din grupul workers', () => {",
+                  "    pm.expect(body.name).to.eql('r1');",
+                  "    pm.expect(body.group).to.eql('workers');",
+                  "});",
+                  "",
+                  "const ids = body.messages.map(m => m.id);",
+                  "pm.test('mesajul adresat @r1 a ajuns aici', () =>",
+                  "    pm.expect(ids, 'retrimite cererea dacă lipsește — e pe drum')",
+                  "      .to.include(pm.collectionVariables.get('directMessageId')));",
+                  "pm.test('a numărat mesaje adresate direct', () =>",
+                  "    pm.expect(body.directlyAddressed).to.be.at.least(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Receptorul își ține propriul istoric și își numără separat mesajele adresate direct — agentul îi spune, la livrare, în ce calitate le primește."
+          }
+        },
+        {
+          "name": "r2 — NU a primit mesajul adresat lui r1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('este r2, tot din grupul workers', () => {",
+                  "    pm.expect(body.name).to.eql('r2');",
+                  "    pm.expect(body.group).to.eql('workers');",
+                  "});",
+                  "",
+                  "const ids = body.messages.map(m => m.id);",
+                  "pm.test('mesajul adresat @r1 nu a ajuns la el', () =>",
+                  "    pm.expect(ids).to.not.include(pm.collectionVariables.get('directMessageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Dovada adresării directe: `r2` e în același grup, pe aceeași coadă, și tot nu primește mesajul care purta numele lui `r1`."
+          }
+        },
+        {
+          "name": "r3 — vede doar difuzările, nu și mesajele grupului workers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('este r3, din grupul reports', () => {",
+                  "    pm.expect(body.name).to.eql('r3');",
+                  "    pm.expect(body.group).to.eql('reports');",
+                  "});",
+                  "",
+                  "const ids = body.messages.map(m => m.id);",
+                  "pm.test('mesajul pentru grupul workers NU a ajuns aici', () =>",
+                  "    pm.expect(ids).to.not.include(pm.collectionVariables.get('lastMessageId')));",
+                  "pm.test('difuzarea A ajuns aici', () =>",
+                  "    pm.expect(ids, 'retrimite cererea dacă lipsește — e pe drum')",
+                  "      .to.include(pm.collectionVariables.get('lastBroadcastId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver3}}/received",
+              "host": [
+                "{{receiver3}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Cele două teste împreună sunt dovada rutării pe grupuri: mesajul pentru `workers` nu e aici, difuzarea este."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 — Adresare directă vs. adresare pe grup",
+      "description": "Aceeași pereche de receptori, două comportamente. Trimite un pachet de mesaje în fiecare fel și compară cum se împart.",
+      "item": [
+        {
+          "name": "Notează contoarele lui r1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('r1Before', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Punctul de pornire pentru comparație."
+          }
+        },
+        {
+          "name": "Notează contoarele lui r2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('r2Before', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Emițătorul trimite 4 mesaje către @r1",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// patru trimiteri într-o singură cerere, ca să se vadă repartiția",
+                  "const sender = pm.collectionVariables.get('sender');",
+                  "for (let i = 1; i <= 3; i++) {",
+                  "    pm.sendRequest({",
+                  "        url: `${sender}/send/to/r1?content=direct ${i}`,",
+                  "        method: 'POST'",
+                  "    }, () => {});",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('emițătorul a trimis', () => pm.response.to.have.status(200));",
+                  "pm.test('agentul a acceptat', () => pm.expect(pm.response.json().accepted).to.be.true);",
+                  "pm.test('a fost adresat lui r1', () =>",
+                  "    pm.expect(pm.response.json().addressedTo).to.eql(\"receiver 'r1'\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{sender}}/send/to/r1?content=direct 4",
+              "host": [
+                "{{sender}}"
+              ],
+              "path": [
+                "send",
+                "to",
+                "r1"
+              ],
+              "query": [
+                {
+                  "key": "content",
+                  "value": "direct 4"
+                }
+              ]
+            },
+            "description": "`POST /send/to/{nume}` e același lucru cu `POST /send?target=@nume`, scris pe litere.\n\nScriptul pre-request trimite alte 3, ca să fie 4 în total."
+          }
+        },
+        {
+          "name": "Toate 4 au ajuns la r1, niciunul la r2",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const until = Date.now() + 3000;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const now = pm.response.json().total;",
+                  "const before = Number(pm.collectionVariables.get('r1Before'));",
+                  "",
+                  "pm.test('r1 a primit toate cele 4', () =>",
+                  "    pm.expect(now - before, 'retrimite cererea dacă sunt mai puține — sunt pe drum')",
+                  "      .to.eql(4));",
+                  "console.log(`r1: ${before} -> ${now}`);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Toate patru la același receptor. Dacă ar fi fost adresate grupului, s-ar fi împărțit între `r1` și `r2` — exact ce arată cererile următoare."
+          }
+        },
+        {
+          "name": "r2 nu s-a clintit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = pm.response.json().total;",
+                  "const before = Number(pm.collectionVariables.get('r2Before'));",
+                  "pm.test('r2 nu a primit niciunul', () => pm.expect(now - before).to.eql(0));",
+                  "console.log(`r2: ${before} -> ${now}`);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Acum 4 mesaje către GRUPUL workers",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const sender = pm.collectionVariables.get('sender');",
+                  "for (let i = 1; i <= 3; i++) {",
+                  "    pm.sendRequest({",
+                  "        url: `${sender}/send/group/workers?content=grup ${i}`,",
+                  "        method: 'POST'",
+                  "    }, () => {});",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('emițătorul a trimis', () => pm.response.to.have.status(200));",
+                  "pm.test('a fost adresat grupului', () =>",
+                  "    pm.expect(pm.response.json().addressedTo).to.eql(\"group 'workers'\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{sender}}/send/group/workers?content=grup 4",
+              "host": [
+                "{{sender}}"
+              ],
+              "path": [
+                "send",
+                "group",
+                "workers"
+              ],
+              "query": [
+                {
+                  "key": "content",
+                  "value": "grup 4"
+                }
+              ]
+            },
+            "description": "Același emițător, aceiași receptori — doar destinația e alta."
+          }
+        },
+        {
+          "name": "De data asta s-au împărțit între r1 și r2",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const until = Date.now() + 3000;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r1Now = pm.response.json().total;",
+                  "const r1Before = Number(pm.collectionVariables.get('r1Before'));",
+                  "const r1Delta = r1Now - r1Before - 4;   // minus cele 4 directe de mai devreme",
+                  "",
+                  "pm.sendRequest(pm.collectionVariables.get('receiver2') + '/received', (err, res) => {",
+                  "    const r2Delta = res.json().total - Number(pm.collectionVariables.get('r2Before'));",
+                  "",
+                  "    pm.test('cele 4 mesaje de grup s-au livrat o singură dată fiecare', () =>",
+                  "        pm.expect(r1Delta + r2Delta, 'retrimite cererea dacă sunt mai puține — sunt pe drum')",
+                  "          .to.eql(4));",
+                  "    pm.test('s-au împărțit, nu au mers toate la unul', () => {",
+                  "        pm.expect(r1Delta).to.be.above(0);",
+                  "        pm.expect(r2Delta).to.be.above(0);",
+                  "    });",
+                  "    console.log(`din 4 mesaje de grup: r1 a luat ${r1Delta}, r2 a luat ${r2Delta}`);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "**Competing consumers.** Cele 4 mesaje adresate grupului s-au împărțit între cei doi receptori, fiecare livrat exact o dată.\n\nContrastul cu cererile de mai sus e tot demonstrația: aceiași receptori, aceeași coadă, comportament diferit după cum a fost adresat mesajul."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03b — Către toți membrii unui grup",
+      "description": "Sunt 3 receptori, dintre care 2 în grupul `workers`. `every:workers` trebuie să ajungă la amândoi cei din grup — și la niciunul din afara lui.\n\nAsta e a treia formă de plural, distinctă de celelalte două:\n\n| Destinație | r1 | r2 | r3 |\n|---|---|---|---|\n| `workers` | unul din ei | unul din ei | — |\n| `every:workers` | ✓ | ✓ | — |\n| `all` | unul din ei | unul din ei | ✓ |",
+      "item": [
+        {
+          "name": "Notează contorul lui r1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('everyBefore1', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Punctul de pornire."
+          }
+        },
+        {
+          "name": "Notează contorul lui r2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('everyBefore2', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Notează contorul lui r3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('everyBefore3', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver3}}/received",
+              "host": [
+                "{{receiver3}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "`r3` e în grupul `reports`. Contorul lui trebuie să rămână neschimbat — asta deosebește `every:workers` de o difuzare."
+          }
+        },
+        {
+          "name": "Trimite către toți din workers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesaj acceptat (202)', () => pm.response.to.have.status(202));",
+                  "const m = pm.response.json();",
+                  "pm.test('agentul confirmă destinația', () =>",
+                  "    pm.expect(m.addressedTo).to.eql(\"every member of group 'workers'\"));",
+                  "pm.test('merge tot prin coada grupului', () =>",
+                  "    pm.expect(m.routingKey).to.eql('messager.workers'));",
+                  "pm.collectionVariables.set('everyMessageId', m.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"alice\",\n  \"content\": \"pentru toti din workers\",\n  \"target\": \"every:workers\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "`every:workers` (sau `workers:*`) adresează toți membrii grupului.\n\n`routingKey` arată că mesajul intră pe aceeași coadă ca o trimitere obișnuită către grup — **nu există o a doua coadă pentru difuzare**. Ce îl transformă din „unul dintre ei\" în „toți\" e un indicator purtat în antet, pe care pasul de livrare îl citește. Fiecare membru primește apoi propria copie prin HTTP.\n\nEmițătorul poate folosi și `POST {{sender}}/send/everyone/workers`."
+          }
+        },
+        {
+          "name": "r1 a primit o copie",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const until = Date.now() + 3000;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const delta = pm.response.json().total - Number(pm.collectionVariables.get('everyBefore1'));",
+                  "pm.test('r1 a primit exact o copie', () =>",
+                  "    pm.expect(delta, 'retrimite cererea dacă e 0 — e pe drum').to.eql(1));",
+                  "pm.test('mesajul e chiar cel trimis', () =>",
+                  "    pm.expect(pm.response.json().messages.map(m => m.id))",
+                  "      .to.include(pm.collectionVariables.get('everyMessageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Primul membru al grupului."
+          }
+        },
+        {
+          "name": "r2 a primit și el o copie",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const delta = pm.response.json().total - Number(pm.collectionVariables.get('everyBefore2'));",
+                  "pm.test('r2 a primit exact o copie', () =>",
+                  "    pm.expect(delta, 'retrimite cererea dacă e 0 — e pe drum').to.eql(1));",
+                  "pm.test('mesajul e chiar cel trimis', () =>",
+                  "    pm.expect(pm.response.json().messages.map(m => m.id))",
+                  "      .to.include(pm.collectionVariables.get('everyMessageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Al doilea membru. Spre deosebire de o trimitere obișnuită către grup, unde doar unul dintre ei ar fi primit mesajul, aici l-au primit amândoi."
+          }
+        },
+        {
+          "name": "r3, din alt grup, NU a primit nimic",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const delta = pm.response.json().total - Number(pm.collectionVariables.get('everyBefore3'));",
+                  "pm.test('r3 nu a primit nimic', () => pm.expect(delta).to.eql(0));",
+                  "pm.test('mesajul nu a ajuns la el', () =>",
+                  "    pm.expect(pm.response.json().messages.map(m => m.id))",
+                  "      .to.not.include(pm.collectionVariables.get('everyMessageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver3}}/received",
+              "host": [
+                "{{receiver3}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Testul care deosebește `every:workers` de o difuzare: `all` i-ar fi trimis și lui o copie, `every:workers` nu."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03c — Chiar către toți: `every:all`",
+      "description": "Completarea matricei de adresare. Două întrebări decid destinația:\n\n|  | un membru | toți membrii |\n|---|---|---|\n| **un grup** | `workers` | `every:workers` |\n| **toate grupurile** | `all` | `every:all` |\n\n`all` e cel care surprinde: dă o copie *fiecărui grup*, dar în interiorul grupului tot un singur receptor o ia. Dacă trimiți `all` și vezi că `r1` nu a primit nimic, **nu e o defecțiune** — a fost rândul lui `r2`.\n\n`every:all` e singura formă care ajunge la fiecare receptor care există.",
+      "item": [
+        {
+          "name": "Notează contorul lui r1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('allBefore1', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Notează contorul lui r2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('allBefore2', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Notează contorul lui r3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('allBefore3', pm.response.json().total);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver3}}/received",
+              "host": [
+                "{{receiver3}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Trimite cu every:all",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesaj acceptat (202)', () => pm.response.to.have.status(202));",
+                  "const m = pm.response.json();",
+                  "pm.test('agentul confirmă destinația', () =>",
+                  "    pm.expect(m.addressedTo).to.eql('every receiver of every group'));",
+                  "pm.test('foloseste aceeasi cheie ca difuzarea obisnuita', () =>",
+                  "    pm.expect(m.routingKey).to.eql('messager.all'));",
+                  "pm.collectionVariables.set('allMessageId', m.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"alice\",\n  \"content\": \"chiar pentru toti\",\n  \"target\": \"every:all\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Mesajul se publică **o singură dată**, cu aceeași cheie ca difuzarea obișnuită (`messager.all`), deci fiecare grup primește o copie în coada lui. Diferența e indicatorul „toți membrii\" care călătorește cu el: fiecare grup o împarte mai departe la toți receptorii săi, în loc să o dea unuia singur.\n\nSe acceptă și `every:*`."
+          }
+        },
+        {
+          "name": "r1 a primit",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const until = Date.now() + 3000;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().total - Number(pm.collectionVariables.get('allBefore1'));",
+                  "pm.test('r1 a primit exact o copie', () =>",
+                  "    pm.expect(d, 'retrimite cererea dacă e 0 — e pe drum').to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/received",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Cu o difuzare obișnuită, aici ar fi fost 0 sau 1, după cum cădea rotația."
+          }
+        },
+        {
+          "name": "r2 a primit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().total - Number(pm.collectionVariables.get('allBefore2'));",
+                  "pm.test('r2 a primit exact o copie', () =>",
+                  "    pm.expect(d, 'retrimite cererea dacă e 0 — e pe drum').to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Celălalt membru al grupului `workers`. Amândoi au primit — asta nu se întâmplă cu `all`."
+          }
+        },
+        {
+          "name": "r3 a primit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json().total - Number(pm.collectionVariables.get('allBefore3'));",
+                  "pm.test('r3 a primit exact o copie', () =>",
+                  "    pm.expect(d, 'retrimite cererea dacă e 0 — e pe drum').to.eql(1));",
+                  "console.log('every:all -> r1 +1, r2 +1, r3 +1 (toti trei)');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver3}}/received",
+              "host": [
+                "{{receiver3}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "Singurul din grupul `reports`. Toți trei au primit câte o copie."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 — Ce se întâmplă când receptorul nu răspunde",
+      "description": "Obiectivul 1.d. Diferența esențială: un mesaj adresat unui grup **comută** pe alt receptor, unul adresat unui receptor anume **nu** — ar fi contrariul a ce a cerut emițătorul.\n\n**Rulează folderul întreg** — ultima cerere repară receptorul.",
+      "item": [
+        {
+          "name": "r1 începe să refuze",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('r1 e marcat bolnav', () => pm.expect(pm.response.json().healthy).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/fail",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "fail"
+              ]
+            },
+            "description": "De acum răspunde `503` la orice mesaj."
+          }
+        },
+        {
+          "name": "Mesaj adresat GRUPULUI — comută pe r2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesaj acceptat (202)', () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set('lastMessageId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"bob\",\n  \"content\": \"oricine din grup poate lua asta\",\n  \"target\": \"workers\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Emițătorul nu știe și nu trebuie să știe că un receptor e căzut — primește tot `202`."
+          }
+        },
+        {
+          "name": "Confirmare: r2 l-a luat",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 3 încercări la r1, cu pauze care se dublează (0.5s, 1s)",
+                  "const until = Date.now() + 5000;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json().messages.map(m => m.id);",
+                  "pm.test('mesajul a ajuns la receptorul sănătos', () =>",
+                  "    pm.expect(ids, 'retrimite cererea — reîncercările durează câteva secunde')",
+                  "      .to.include(pm.collectionVariables.get('lastMessageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver2}}/received",
+              "host": [
+                "{{receiver2}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "3 încercări eșuate la `r1`, apoi comutare pe `r2`. Nimic pierdut.\n\n```bash\ndocker compose logs broker | grep -E \"Attempt|delivered to receiver\"\n```"
+          }
+        },
+        {
+          "name": "Mesaj adresat lui @r1 — NU comută",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesaj acceptat (202)', () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set('deadLetterId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"bob\",\n  \"content\": \"numai r1 avea voie sa ia asta\",\n  \"target\": \"@r1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Același receptor căzut, dar de data asta emițătorul l-a numit. `r2` e sănătos și în același grup — și totuși nu are voie să îl ia."
+          }
+        },
+        {
+          "name": "A ajuns la scrisori nelivrate, nu la r2",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const until = Date.now() + 6000;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const wanted = pm.collectionVariables.get('deadLetterId');",
+                  "const ids = pm.response.json().map(m => m.id);",
+                  "",
+                  "pm.test('mesajul e păstrat ca nelivrat', () =>",
+                  "    pm.expect(ids, 'retrimite cererea — reîncercările durează câteva secunde')",
+                  "      .to.include(wanted));",
+                  "",
+                  "pm.sendRequest(pm.collectionVariables.get('receiver2') + '/received', (err, res) => {",
+                  "    const atR2 = res.json().messages.map(m => m.id);",
+                  "    pm.test('r2 nu a primit un mesaj care nu era pentru el', () =>",
+                  "        pm.expect(atR2).to.not.include(wanted));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages/dead-letters",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages",
+                "dead-letters"
+              ]
+            },
+            "description": "**Dead Letter Channel.** Mesajul nu e aruncat și nu e dat altcuiva: e păstrat, cu motivul în antete.\n\nAsta e diferența de politică între cele două feluri de adresare — comparată direct cu cererea de mai sus, unde același receptor căzut a dus la comutare."
+          }
+        },
+        {
+          "name": "Repară r1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('r1 e sănătos din nou', () => pm.expect(pm.response.json().healthy).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{receiver1}}/heal",
+              "host": [
+                "{{receiver1}}"
+              ],
+              "path": [
+                "heal"
+              ]
+            },
+            "description": "Nu sări peste asta — altfel `r1` rămâne căzut pentru restul demonstrației."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 — Topologia se schimbă în timpul funcționării",
+      "description": "Obiectivul 1.b. Niciun grup nu e configurat în agent: apar și dispar odată cu participanții.\n\nPentru ultimele cereri pornește al patrulea receptor:\n\n```bash\ndocker compose --profile extra up -d receiver-4\n```",
+      "item": [
+        {
+          "name": "Grupurile vii acum",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const groups = pm.response.json().map(g => g.group);",
+                  "console.log('grupuri: ' + groups.join(', '));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/groups",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "groups"
+              ]
+            },
+            "description": "Coada și numărul de consumatori activi ai fiecărui grup."
+          }
+        },
+        {
+          "name": "Un receptor nou, într-un grup care nu exista — r4",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// containerul trebuie pornit: docker compose --profile extra up -d receiver-4",
+                  "const until = Date.now() + 1500;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('înregistrat (201)', () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test('grupul a fost creat pentru el', () => pm.expect(r.group).to.eql('archive'));",
+                  "pm.test('poate fi adresat ca @r4', () => pm.expect(r.addressAs).to.eql('@r4'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"r4\",\n  \"group\": \"archive\",\n  \"callbackUrl\": \"http://receiver-4:9100/receive\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/api/receivers",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "receivers"
+              ]
+            },
+            "description": "**Grupul `archive` nu trebuie să existe dinainte** — e creat aici, pentru că un receptor a spus că face parte din el. Coada, legăturile și consumatorii apar pe loc.\n\nContainerul face asta singur la pornire; cererea e aici ca să se vadă protocolul, și e idempotentă — dacă `r4` e deja înregistrat cu aceleași date, agentul întoarce înregistrarea existentă.\n\nAdresa e numele serviciului din rețeaua Docker, nu `localhost`: **agentul** e cel care sună."
+          }
+        },
+        {
+          "name": "Trimite noului grup și verifică",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('emițătorul a trimis', () => pm.response.to.have.status(200));",
+                  "pm.test('agentul a acceptat', () => pm.expect(pm.response.json().accepted).to.be.true);",
+                  "pm.collectionVariables.set('lastMessageId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{sender}}/send/to/r4?content=salut archive",
+              "host": [
+                "{{sender}}"
+              ],
+              "path": [
+                "send",
+                "to",
+                "r4"
+              ],
+              "query": [
+                {
+                  "key": "content",
+                  "value": "salut archive"
+                }
+              ]
+            },
+            "description": "Același emițător, o destinație care nu exista acum un minut. Nu a fost nevoie de nicio repornire și de nicio schimbare în configurația lui."
+          }
+        },
+        {
+          "name": "r4 l-a primit",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const until = Date.now() + 2500;",
+                  "while (Date.now() < until) { /* așteptare */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('este r4, din grupul archive', () => {",
+                  "    pm.expect(body.name).to.eql('r4');",
+                  "    pm.expect(body.group).to.eql('archive');",
+                  "});",
+                  "pm.test('mesajul a ajuns', () =>",
+                  "    pm.expect(body.messages.map(m => m.id))",
+                  "      .to.include(pm.collectionVariables.get('lastMessageId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{receiver4}}/received",
+              "host": [
+                "{{receiver4}}"
+              ],
+              "path": [
+                "received"
+              ]
+            },
+            "description": "**Necesită containerul pornit:**\n\n```bash\ndocker compose --profile extra up -d receiver-4\n```"
+          }
+        },
+        {
+          "name": "Scoate receptorul din listă",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('a fost scos', () => pm.expect(pm.response.json().unregistered).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/receivers/r4",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "receivers",
+                "r4"
+              ]
+            },
+            "description": "Se poate da numele sau id-ul. Aplicațiile-receptor fac asta singure la oprire.\n\nDin acest moment `@r4` nu mai e o destinație validă. Opreşte și containerul:\n\n```bash\ndocker compose --profile extra stop receiver-4\n```"
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 — Inspecția agentului",
+      "description": "Ce vede agentul despre sine: stocarea transient și canalele de infrastructură.",
+      "item": [
+        {
+          "name": "Canalele în memorie — dimensiune și debit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "const channels = pm.response.json();",
+                  "pm.test('niciun canal nu depășește capacitatea', () =>",
+                  "    channels.forEach(c => pm.expect(c.buffered).to.be.at.most(c.capacity)));",
+                  "",
+                  "console.log(channels.map(c =>",
+                  "    `${c.channel.padEnd(26)} în buffer=${c.buffered}/${c.capacity} primite=${c.received} evacuate=${c.evicted}`",
+                  ").join('\\n'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages/channels",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages",
+                "channels"
+              ]
+            },
+            "description": "Stocarea transient la lucru — câte un canal per coadă, fiecare un deque concurent mărginit.\n\n`evicted` crește după ce un canal atinge capacitatea (100 implicit) și începe să elimine cele mai vechi mesaje. Testul verifică invariantul: limita ține, oricâte fire scriu simultan."
+          }
+        },
+        {
+          "name": "Tot ce a consumat agentul, pe canale",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));",
+                  "pm.test('coada de audit a văzut tot', () =>",
+                  "    pm.expect(Object.keys(pm.response.json())).to.include('messager.queue.audit'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages"
+              ]
+            },
+            "description": "Toate canalele deodată.\n\n`messager.queue.audit` e legată cu `messager.#`, deci primește o copie a fiecărui mesaj publicat, indiferent cui era adresat — e canalul cu cele mai multe mesaje. Difuzările intră în ea o singură dată, chiar dacă ajung în fiecare grup."
+          }
+        },
+        {
+          "name": "Mesaje respinse de validare",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('răspuns 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/api/messages/invalid",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "api",
+                "messages",
+                "invalid"
+              ]
+            },
+            "description": "**Invalid Message Channel.** Aici ajung mesajele care au trecut de API dar nu trec validarea la ieșirea din coadă — de exemplu unele puse direct în coadă prin UI-ul RabbitMQ, ocolind agentul. Nu sunt reîncercate: ar eșua la fel de fiecare dată.\n\nDacă lista e goală, e normal — API-ul le respinge înainte să intre în coadă (folderul 01)."
+          }
+        }
+      ]
+    }
+  ]
+}
